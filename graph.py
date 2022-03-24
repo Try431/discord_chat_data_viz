@@ -10,6 +10,8 @@ import os
 from tzlocal import get_localzone
 import numpy as np
 
+from collections import OrderedDict
+
 TIME_FORMAT = '%Y-%m-%dT%H:%M:%S.%f+00:00'
 LOCAL_TZ = get_localzone()
 
@@ -24,8 +26,26 @@ WEEK = ['Mon',
         'Sat',
         'Sun']
 
+SERVER_NAME = "The Ganja Army and Brad"
+TEXT_CHANNELS = "Text Channels"
 
-def export_json(user_token):
+
+def export_single_channel_to_json(user_token, channel_id):
+    isExist = os.path.exists(JSON_FILES_PATH)
+    if not isExist:
+        os.makedirs(JSON_FILES_PATH)
+
+    cmd = ["dotnet", "run", "export", "-t", user_token, "-c", channel_id,
+           "--format", "Json", "--output", f"../../{JSON_FILES_PATH}"]
+    output = subprocess.call(
+        cmd, cwd="./DiscordChatExporter/DiscordChatExporter.Cli/")
+    if output != 0:
+        print("Non-zero exit code for DiscordChatExporter call")
+
+    clean_up_json_filenames()
+
+
+def export_all_channels_to_json(user_token):
     isExist = os.path.exists(JSON_FILES_PATH)
     if not isExist:
         os.makedirs(JSON_FILES_PATH)
@@ -36,6 +56,19 @@ def export_json(user_token):
         cmd, cwd="./DiscordChatExporter/DiscordChatExporter.Cli/")
     if output != 0:
         print("Non-zero exit code for DiscordChatExporter call")
+
+    clean_up_json_filenames()
+
+
+def clean_up_json_filenames():
+    for (_, _, filenames) in os.walk(JSON_FILES_PATH):
+        for filename in filenames:
+            if "Voice Channels" in filename:
+                os.remove(f"{JSON_FILES_PATH}/{filename}")
+                continue
+            filename_split = filename.split("[")
+            new_filename = filename_split[0].strip().replace("- Text Channels -", "-").replace("- Voice Channels -", "-") + ".json"
+            os.rename(f"{JSON_FILES_PATH}/{filename}", f"{JSON_FILES_PATH}/{new_filename}")
 
 
 def grab_messages_from_specified_channel(channel_filename):
@@ -149,6 +182,7 @@ def get_chattiest_per_day(data):
 def plot_data(json_data, title=None):
     print("Plotting data and creating graph...")
     df = pd.DataFrame(json_data).T
+    print(df)
     ax = df.plot(kind="bar", stacked=True, width=0.9, ylabel='Msg Count')
 
     # adding count total to stacked bars
@@ -182,41 +216,66 @@ def plot_data(json_data, title=None):
     plt.savefig(f"{IMAGES_PATH}/{title}.png", dpi=120)
 
 
-if __name__ == '__main__':
-    if len(sys.argv[1:]) > 0:
-        user_token = sys.argv[1]
-        export_json(user_token)
+# Plot Functions
 
-    # single channel
-    # channel_msg = grab_messages_from_specified_channel(
-    #     "The Ganja Army and Brad - Text Channels - realpolitik [722097723758739466].json")
-    # parsed_data = parse_message_data(channel_msg)
-    # plot_data(parsed_data, "realpolitik")
-
-    # all channels
+def plot_chattiest_per_day():
     all_channel_msgs = consolidate_channel_messages()
     parsed_data = parse_message_data(all_channel_msgs)
-    t = 0
+    chattiest = get_chattiest_per_day(parsed_data)
+    ordered = OrderedDict(sorted(chattiest.items(), key=lambda t: t[0]))
+    plot_data(ordered, "Chattiest")
+
+
+def plot_single_channel_message_data(channel_name):
+    channel_msg = grab_messages_from_specified_channel(
+        f"{SERVER_NAME} - {channel_name}.json")
+    parsed_data = parse_message_data(channel_msg)
+    plot_data(parsed_data, channel_name)
+
+
+def plot_highest_msg_count_per_day():
+    all_channel_msgs = consolidate_channel_messages()
+    parsed_data = parse_message_data(all_channel_msgs)
+    hpd = get_highest_msg_count_and_day_per_author(parsed_data)
+    plot_data(hpd, "Highest Msg Count and Day")
+    print(hpd)
+
+
+def plot_total_msg_count_per_user_all_channels():
+    all_channel_msgs = consolidate_channel_messages()
+    parsed_data = parse_message_data(all_channel_msgs)
+    total = 0
     for d in parsed_data:
-        sub_t = sum(parsed_data[d].values())
-        t += sub_t
-    print(t)
-
-    # chattiest = get_chattiest_per_day(parsed_data)
-    # print(chattiest)
-    # plot_data(chattiest, "Chattiest")
-
-    # hpd = get_highest_msg_count_and_day_per_author(parsed_data)
-    # plot_data(hpd, "Highest Msg Count and Day")
-    # print(hpd)
+        sub_total = sum(parsed_data[d].values())
+        total += sub_total
+    print(f"Total messages: {total}")
 
     auth_total_data = get_total_per_author_from_messages(all_channel_msgs)
-    # print(auth_total_data)
+    print(auth_total_data)
     s = 0
     for k in auth_total_data:
         s += auth_total_data[k][0]
     print(s)
-    # plot_data(auth_total_data, "Total Msg Count per User")
+    plot_data(auth_total_data, "Total Msg Count per User")
 
-    # print(parsed_data)
-    # plot_data(parsed_data, "All Messages")
+
+def plot_all_messages():
+    all_channel_msgs = consolidate_channel_messages()
+    parsed_data = parse_message_data(all_channel_msgs)
+    ordered = OrderedDict(sorted(parsed_data.items(), key=lambda t: t[0]))
+    plot_data(ordered, "All Messages")
+
+
+if __name__ == '__main__':
+    # print("Exporting data now...")
+    # user_token = sys.argv[1]
+    # if len(sys.argv) == 2:
+    #     export_all_channels_to_json(user_token)
+    # elif len(sys.argv) == 3:
+    #     export_single_channel_to_json(user_token, channel_id=sys.argv[2])
+
+    # plot_single_channel_message_data("wuhan")
+    # plot_total_msg_count_per_user_all_channels()
+    # plot_highest_msg_count_per_day()
+    # plot_chattiest_per_day()
+    plot_all_messages()
