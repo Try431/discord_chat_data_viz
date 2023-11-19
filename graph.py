@@ -29,14 +29,43 @@ WEEK = ['Mon',
 SERVER_NAME = "The Ganja Army and Brad"
 TEXT_CHANNELS = "Text Channels"
 
+CHANNEL_IDS = ["496450556328411139",
+               "543260453141348382",
+               "601277606637338644",
+               "708197236189691914",
+               "618110826041049138",
+               "682821942977364007",
+               "652254210435448846",
+               "907660681300570193",
+               "649682583407427645",
+               "722097723758739466",
+               "867066013908860978",
+               "882269113907556412"]
+
 
 def export_single_channel_to_json(user_token, channel_id):
-    isExist = os.path.exists(JSON_FILES_PATH)
-    if not isExist:
+    doesExist = os.path.exists(JSON_FILES_PATH)
+    if not doesExist:
         os.makedirs(JSON_FILES_PATH)
 
-    cmd = ["dotnet", "run", "export", "-t", user_token, "-c", channel_id,
+    cmd = ["dotnet", "DiscordChatExporter.Cli.dll", "export", "-t", user_token, "-c", channel_id,
            "--format", "Json", "--output", f"../../{JSON_FILES_PATH}"]
+    output = subprocess.call(
+        cmd, cwd="./DiscordChatExporter/DiscordChatExporter.Cli/")
+    if output != 0:
+        print("Non-zero exit code for DiscordChatExporter call")
+
+    clean_up_json_filenames()
+
+def export_all_main_channels_to_json(user_token, addtl_flags=[]):
+    doesExist = os.path.exists(JSON_FILES_PATH)
+    if not doesExist:
+        os.makedirs(JSON_FILES_PATH)
+
+    cmd = ["dotnet", "DiscordChatExporter.Cli.dll", "export", "-t", user_token,
+           "--format", "Json", "--parallel", "10", "--output", f"../../{JSON_FILES_PATH}"]
+    cmd += ["-c"] + CHANNEL_IDS
+    cmd += addtl_flags
     output = subprocess.call(
         cmd, cwd="./DiscordChatExporter/DiscordChatExporter.Cli/")
     if output != 0:
@@ -46,11 +75,11 @@ def export_single_channel_to_json(user_token, channel_id):
 
 
 def export_all_channels_to_json(user_token):
-    isExist = os.path.exists(JSON_FILES_PATH)
-    if not isExist:
+    doesExist = os.path.exists(JSON_FILES_PATH)
+    if not doesExist:
         os.makedirs(JSON_FILES_PATH)
 
-    cmd = ["dotnet", "run", "exportall", "-t", user_token,
+    cmd = ["dotnet", "DiscordChatExporter.Cli.dll", "exportall", "-t", user_token,
            "--format", "Json", "--parallel", "10", "--output", f"../../{JSON_FILES_PATH}"]
     output = subprocess.call(
         cmd, cwd="./DiscordChatExporter/DiscordChatExporter.Cli/")
@@ -67,7 +96,7 @@ def clean_up_json_filenames():
                 os.remove(f"{JSON_FILES_PATH}/{filename}")
                 continue
             filename_split = filename.split("[")
-            new_filename = filename_split[0].strip().replace("- Text Channels -", "-").replace("- Voice Channels -", "-") + ".json"
+            new_filename = filename_split[0].strip().replace("- Text Channels -", "-").replace("- Voice Channels -", "-").replace(" ", "_") + ".json"
             os.rename(f"{JSON_FILES_PATH}/{filename}", f"{JSON_FILES_PATH}/{new_filename}")
 
 
@@ -102,7 +131,8 @@ def parse_message_data(messages):
             print(m)
         if m.get("author").get("isBot"):
             continue
-        timestamp = m.get("timestamp")
+        # replacing timezone with utc manually to make parsing easier, since we don't care
+        timestamp = m.get("timestamp")[:-6] + "+00:00"
         regex = r":[0-9][0-9]\+00:00"
         match = re.search(regex, timestamp)
         if match:
@@ -155,7 +185,12 @@ def get_highest_msg_count_and_day_per_author(data):
                 highest_author_day[author] = day
     data = {}
     for auth in highest_author_count:
-        data[highest_author_day[auth]] = {auth: highest_author_count[auth]}
+        # this handles the case where multiple people sent their highest number of messages on the same day
+        if highest_author_day[auth] in data:
+          data[highest_author_day[auth]].update({auth: highest_author_count[auth]})
+        else:
+          data[highest_author_day[auth]] = {auth: highest_author_count[auth]}
+
     return data
 
 
@@ -178,9 +213,32 @@ def get_chattiest_per_day(data):
             chattiest_per_day[day] = shared_chattiest
     return chattiest_per_day
 
+def get_breakdown_of_reactions():
+  messages = consolidate_channel_messages()
+  reaction_breakdown = {}
+  for msg in messages:
+    reactions = msg.get("reactions")
+    for rxn in reactions:
+      is_custom_emoji = rxn.get("emoji").get("id") != ""
+      if is_custom_emoji:
+        emoji_code = f':{rxn.get("emoji").get("code")}:'
+        emoji_count = rxn.get("count")
+        if emoji_code in reaction_breakdown:
+          reaction_breakdown[emoji_code] += emoji_count
+        else:
+          reaction_breakdown[emoji_code] = emoji_count
+
+  sorted_data = dict(sorted(reaction_breakdown.items(), key=lambda item: item[1], reverse=True))
+  for k, v in sorted_data.items():
+    print(k,"-", v)
+
+
 
 def plot_data(json_data, title=None):
     print("Plotting data and creating graph...")
+    print("Raw json data")
+    print(json_data)
+
     df = pd.DataFrame(json_data).T
     print(df)
     ax = df.plot(kind="bar", stacked=True, width=0.9, ylabel='Msg Count')
@@ -267,15 +325,23 @@ def plot_all_messages():
 
 
 if __name__ == '__main__':
-    # print("Exporting data now...")
+    print("Exporting data now...")
     # user_token = sys.argv[1]
     # if len(sys.argv) == 2:
-    #     export_all_channels_to_json(user_token)
+    #     # export_all_channels_to_json(user_token)
+    #     additional_flags = ["--after", "2021-12-31", "--before", "2023-01-01"]
+    #     export_all_main_channels_to_json(user_token, additional_flags)
     # elif len(sys.argv) == 3:
     #     export_single_channel_to_json(user_token, channel_id=sys.argv[2])
 
     # plot_single_channel_message_data("wuhan")
+    # clean_up_json_filenames()
+    # timestamp = '2023-01-01T11:30:27.176-06:00'
+    # x = datetime.datetime.strptime(
+    #         timestamp, TIME_FORMAT).astimezone(timezone('UTC'))
+
     # plot_total_msg_count_per_user_all_channels()
     # plot_highest_msg_count_per_day()
     # plot_chattiest_per_day()
-    plot_all_messages()
+    # plot_all_messages()
+    get_breakdown_of_reactions()
